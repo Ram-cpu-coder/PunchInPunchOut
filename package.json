@@ -12,7 +12,7 @@
     "server": "node server/index.js",
     "client": "npm run build --prefix client",
     "start": "node server/index.js",
-    "build": "npm run build --prefix client",
+    "build": "npm install --prefix client --ignore-scripts && npm run build --prefix client",
     "deploy:build": "npm run build",
     "install:all": "npm install && npm install --prefix client"
   },

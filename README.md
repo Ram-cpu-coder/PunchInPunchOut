@@ -53,7 +53,7 @@ Render settings:
 
 ```text
 Runtime: Node
-Build Command: npm install && npm install --prefix client && npm run deploy:build
+Build Command: npm install && npm run build
 Start Command: npm start
 Health Check Path: /api/health
 ```
