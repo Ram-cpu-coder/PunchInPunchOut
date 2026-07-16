@@ -15,12 +15,15 @@ const daySchema = new mongoose.Schema(
 
 const weekSchema = new mongoose.Schema(
   {
-    weekStart: { type: String, required: true, unique: true, index: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    weekStart: { type: String, required: true, index: true },
     hourlyRate: { type: Number, default: null, min: 0 },
     isPaid: { type: Boolean, default: false },
     days: { type: [daySchema], default: [] }
   },
   { timestamps: true }
 );
+
+weekSchema.index({ userId: 1, weekStart: 1 }, { unique: true });
 
 module.exports = mongoose.model("Week", weekSchema);

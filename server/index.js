@@ -6,6 +6,9 @@ require("dotenv").config();
 
 const weekRoutes = require("./routes/weeks");
 const settingsRoutes = require("./routes/settings");
+const authRoutes = require("./routes/auth");
+const Week = require("./models/Week");
+const Settings = require("./models/Settings");
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -18,6 +21,7 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, database: mongoose.connection.readyState === 1 ? "connected" : "connecting" });
 });
 
+app.use("/api/auth", authRoutes);
 app.use("/api/weeks", weekRoutes);
 app.use("/api/settings", settingsRoutes);
 
@@ -30,7 +34,13 @@ app.get("*", (_req, res) => {
 
 mongoose
   .connect(mongoUri)
-  .then(() => {
+  .then(async () => {
+    await Promise.all([
+      Week.collection.dropIndex("weekStart_1").catch(() => {}),
+      Settings.collection.dropIndex("key_1").catch(() => {})
+    ]);
+    await Promise.all([Week.syncIndexes(), Settings.syncIndexes()]);
+
     app.listen(port, () => {
       console.log(`API running on http://localhost:${port}`);
     });

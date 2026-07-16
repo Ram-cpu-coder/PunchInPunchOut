@@ -1,7 +1,9 @@
 const express = require("express");
 const Week = require("../models/Week");
+const { requireAuth } = require("../middleware/auth");
 
 const router = express.Router();
+router.use(requireAuth);
 
 const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const labels = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -32,12 +34,13 @@ function createDefaultDays(weekStart) {
   });
 }
 
-function normalizeWeek(payload) {
+function normalizeWeek(payload, userId) {
   const weekStart = payload.weekStart;
   const incomingDays = Array.isArray(payload.days) ? payload.days : [];
   const defaults = createDefaultDays(weekStart);
 
   return {
+    userId,
     weekStart,
     hourlyRate: payload.hourlyRate === "" || payload.hourlyRate == null ? null : Number(payload.hourlyRate),
     isPaid: Boolean(payload.isPaid),
@@ -57,8 +60,8 @@ function normalizeWeek(payload) {
 
 router.get("/", async (_req, res, next) => {
   try {
-    const weeks = await Week.find().sort({ weekStart: -1 }).lean();
-    res.json(weeks.map(normalizeWeek));
+    const weeks = await Week.find({ userId: _req.user._id }).sort({ weekStart: -1 }).lean();
+    res.json(weeks.map((week) => normalizeWeek(week, _req.user._id)));
   } catch (error) {
     next(error);
   }
@@ -66,8 +69,8 @@ router.get("/", async (_req, res, next) => {
 
 router.get("/:weekStart", async (req, res, next) => {
   try {
-    const existing = await Week.findOne({ weekStart: req.params.weekStart }).lean();
-    res.json(normalizeWeek(existing || { weekStart: req.params.weekStart }));
+    const existing = await Week.findOne({ userId: req.user._id, weekStart: req.params.weekStart }).lean();
+    res.json(normalizeWeek(existing || { weekStart: req.params.weekStart }, req.user._id));
   } catch (error) {
     next(error);
   }
@@ -75,8 +78,8 @@ router.get("/:weekStart", async (req, res, next) => {
 
 router.put("/:weekStart", async (req, res, next) => {
   try {
-    const normalized = normalizeWeek({ ...req.body, weekStart: req.params.weekStart });
-    const week = await Week.findOneAndUpdate({ weekStart: req.params.weekStart }, normalized, {
+    const normalized = normalizeWeek({ ...req.body, weekStart: req.params.weekStart }, req.user._id);
+    const week = await Week.findOneAndUpdate({ userId: req.user._id, weekStart: req.params.weekStart }, normalized, {
       new: true,
       upsert: true,
       runValidators: true
@@ -90,7 +93,7 @@ router.put("/:weekStart", async (req, res, next) => {
 
 router.delete("/:weekStart", async (req, res, next) => {
   try {
-    await Week.deleteOne({ weekStart: req.params.weekStart });
+    await Week.deleteOne({ userId: req.user._id, weekStart: req.params.weekStart });
     res.status(204).end();
   } catch (error) {
     next(error);

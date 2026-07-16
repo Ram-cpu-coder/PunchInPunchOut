@@ -63,6 +63,8 @@ Environment variables:
 ```text
 NODE_ENV=production
 MONGO_URI=mongodb+srv://USER:PASSWORD@CLUSTER.mongodb.net/hour-calculator?retryWrites=true&w=majority
+JWT_ACCESS_SECRET=use-a-long-random-secret
+JWT_ACCESS_EXPIRES_IN=7d
 ```
 
 Add these values manually in Render when you create the web service.

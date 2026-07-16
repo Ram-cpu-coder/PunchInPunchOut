@@ -2,7 +2,8 @@ const mongoose = require("mongoose");
 
 const settingsSchema = new mongoose.Schema(
   {
-    key: { type: String, required: true, unique: true, default: "default" },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, unique: true, index: true },
+    key: { type: String, required: true, default: "default" },
     hourlyRate: { type: Number, default: null, min: 0 },
     activeTimer: {
       weekStart: { type: String, default: "" },
