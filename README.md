@@ -65,7 +65,7 @@ NODE_ENV=production
 MONGO_URI=mongodb+srv://USER:PASSWORD@CLUSTER.mongodb.net/hour-calculator?retryWrites=true&w=majority
 ```
 
-The included `render.yaml` already contains these service settings. You still need to add `MONGO_URI` in Render because it is secret.
+Add these values manually in Render when you create the web service.
 
 ## Important Notes
 
