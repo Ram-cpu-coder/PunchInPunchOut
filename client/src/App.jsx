@@ -4,6 +4,8 @@ const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satur
 const dayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const API_BASE = import.meta.env.VITE_API_URL || "";
 const SESSION_KEY = "punchin-session";
+const ACTIVE_VIEW_KEY = "punchin-active-view";
+const validViews = ["work", "dashboard", "records"];
 
 function FieldIcon({ name }) {
   return (
@@ -133,12 +135,23 @@ function formatClockTime(date = new Date()) {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
+function formatDisplayTime(value, style) {
+  if (!value) return "--:--";
+  const [rawHours, rawMinutes] = value.split(":").map(Number);
+
+  if (style === "24") return value;
+
+  const suffix = rawHours >= 12 ? "PM" : "AM";
+  const hours = rawHours % 12 || 12;
+  return `${hours}:${String(rawMinutes).padStart(2, "0")} ${suffix}`;
+}
+
 function calculateLiveDayHours(day, activeTimer, now) {
   if (!activeTimer) return calculateDayHours(day);
 
   const elapsedMs = Math.max(now.getTime() - activeTimer.startedAt, 0);
   const breakMs = Number(day.breakMinutes || 0) * 60 * 1000;
-  return Number((Math.max(elapsedMs - breakMs, 0) / 3600000).toFixed(2));
+  return Number((Math.max(elapsedMs - breakMs, 0) / 3600000).toFixed(6));
 }
 
 function formatRunningTime(day, activeTimer, now) {
@@ -168,16 +181,21 @@ function App() {
   const [week, setWeek] = useState(createWeek());
   const [hourlyRate, setHourlyRate] = useState("");
   const [hasSavedHourlyRate, setHasSavedHourlyRate] = useState(false);
-  const [activeView, setActiveView] = useState("work");
+  const [activeView, setActiveView] = useState(() => {
+    const savedView = localStorage.getItem(ACTIVE_VIEW_KEY);
+    return validViews.includes(savedView) ? savedView : "work";
+  });
   const [weekView, setWeekView] = useState("unpaid");
   const [isPaymentOpen, setIsPaymentOpen] = useState(() =>
     typeof window === "undefined" ? true : window.innerWidth > 700
   );
+  const [timeFormat, setTimeFormat] = useState("12");
   const [activeTimer, setActiveTimer] = useState(null);
   const [now, setNow] = useState(() => new Date());
   const [status, setStatus] = useState("Ready");
   const [isSaving, setIsSaving] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const todayIndex = (new Date().getDay() + 6) % 7;
   const activeWorkIndex =
@@ -205,6 +223,7 @@ function App() {
 
   function logout() {
     localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(ACTIVE_VIEW_KEY);
     setAuthToken("");
     setCurrentUser(null);
     setWeeks([]);
@@ -214,6 +233,10 @@ function App() {
     setActiveTimer(null);
     setIsLoaded(true);
   }
+
+  useEffect(() => {
+    localStorage.setItem(ACTIVE_VIEW_KEY, activeView);
+  }, [activeView]);
 
   async function submitAuth(event) {
     event.preventDefault();
@@ -254,6 +277,14 @@ function App() {
 
     return { daily, weeklyHours, weeklyPay };
   }, [activeTimer, hourlyRate, now, week]);
+
+  const activeWorkHours = totals.daily[activeWorkIndex] || 0;
+  const activeWorkPay = activeWorkHours * Number(hourlyRate || 0);
+  const isWorkTimerRunning = activeTimer?.weekStart === week.weekStart && activeTimer.dayIndex === activeWorkIndex;
+  const activeWorkHoursText = activeWorkHours.toFixed(isWorkTimerRunning ? 6 : 2);
+  const activeWorkPayText = isWorkTimerRunning ? `$${activeWorkPay.toFixed(7)}` : money(activeWorkPay);
+  const currentWorkDayCompleted = Boolean(currentWorkDay.start && currentWorkDay.end && !isWorkTimerRunning);
+  const hasOtherActiveTimer = Boolean(activeTimer) && !isWorkTimerRunning;
 
   const unpaidWeeks = useMemo(() => {
     return weeks
@@ -432,7 +463,7 @@ function App() {
   useEffect(() => {
     if (!activeTimer) return undefined;
 
-    const interval = window.setInterval(() => setNow(new Date()), 1000);
+    const interval = window.setInterval(() => setNow(new Date()), 250);
     return () => window.clearInterval(interval);
   }, [activeTimer]);
 
@@ -462,19 +493,36 @@ function App() {
     const isRunning = activeTimer?.weekStart === week.weekStart && activeTimer.dayIndex === index;
 
     if (isRunning) {
+      const nextWeek = {
+        ...week,
+        days: week.days.map((day, dayIndex) => (dayIndex === index ? { ...day, end: clockTime } : day))
+      };
+
+      setIsSaving(true);
+      setStatus("Stopping shift and saving...");
+
       try {
         await clearActiveTimer();
+        setWeek(nextWeek);
+        setActiveTimer(null);
+
+        const response = await apiFetch(`/api/weeks/${nextWeek.weekStart}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...nextWeek, hourlyRate: null })
+        });
+
+        if (!response.ok) throw new Error("Shift stopped, but week save failed.");
+
+        const saved = await response.json();
+        setWeek({ ...saved, isPaid: Boolean(saved.isPaid) });
+        await loadWeeks();
+        setStatus(`${week.days[index].label} stopped at ${clockTime}. Week saved automatically.`);
       } catch (error) {
         setStatus(error.message);
-        return;
+      } finally {
+        setIsSaving(false);
       }
-
-      setWeek((current) => ({
-        ...current,
-        days: current.days.map((day, dayIndex) => (dayIndex === index ? { ...day, end: clockTime } : day))
-      }));
-      setActiveTimer(null);
-      setStatus(`${week.days[index].label} stopped at ${clockTime}. Save the week when ready.`);
       return;
     }
 
@@ -626,6 +674,7 @@ function App() {
     const isRunning = activeTimer?.weekStart === week.weekStart && activeTimer.dayIndex === index;
     const isCompleted = Boolean(day.start && day.end && !isRunning);
     const anotherTimerRunning = Boolean(activeTimer) && !isRunning;
+    const isEditable = mode !== "today" && !isRunning;
 
     return (
       <article className={`day-row ${mode === "today" ? "today-row" : ""} ${isRunning ? "is-running" : ""}`} key={day.key}>
@@ -638,15 +687,38 @@ function App() {
             className={`punch-button ${isRunning ? "running" : ""} ${isCompleted ? "completed" : ""}`}
             type="button"
             onClick={() => toggleDayTimer(index)}
-            disabled={anotherTimerRunning || isCompleted}
+            disabled={anotherTimerRunning || isCompleted || isSaving}
           >
             <Icon name={isRunning || isCompleted ? "stop" : "play"} />
             {isRunning ? "Stop shift" : isCompleted ? "Completed" : "Start shift"}
           </button>
-          <div className="time-stamps">
-            <span>Start <strong>{day.start || "--:--"}</strong></span>
-            <span>End <strong>{day.end || (isRunning ? "Running" : "--:--")}</strong></span>
-          </div>
+          {isEditable ? (
+            <div className="shift-edit-fields">
+              <label>
+                <span>Start</span>
+                <input
+                  type="time"
+                  value={day.start}
+                  onChange={(event) => updateDay(index, "start", event.target.value)}
+                  aria-label={`${day.label} start time`}
+                />
+              </label>
+              <label>
+                <span>End</span>
+                <input
+                  type="time"
+                  value={day.end}
+                  onChange={(event) => updateDay(index, "end", event.target.value)}
+                  aria-label={`${day.label} end time`}
+                />
+              </label>
+            </div>
+          ) : (
+            <div className="time-stamps">
+              <span>Start <strong>{formatDisplayTime(day.start, timeFormat)}</strong></span>
+              <span>End <strong>{day.end ? formatDisplayTime(day.end, timeFormat) : isRunning ? "Running" : "--:--"}</strong></span>
+            </div>
+          )}
           {isRunning && <span className="live-clock">{formatRunningTime(day, activeTimer, now)}</span>}
         </div>
         <label className="pretty-field compact-field">
@@ -798,7 +870,7 @@ function App() {
 
   return (
     <main className="app-frame">
-      <aside className="sidebar" aria-label="Main navigation">
+      <aside className={`sidebar ${isMobileMenuOpen ? "menu-open" : ""}`} aria-label="Main navigation">
         <div className="brand-mark">
           <span>PI</span>
           <div>
@@ -806,13 +878,25 @@ function App() {
             <small>Hours and pay</small>
           </div>
         </div>
+        <button
+          className="hamburger-button"
+          type="button"
+          onClick={() => setIsMobileMenuOpen((open) => !open)}
+          aria-label={isMobileMenuOpen ? "Close menu" : "Open menu"}
+          aria-expanded={isMobileMenuOpen}
+        >
+          <Icon name={isMobileMenuOpen ? "clear" : "menu"} />
+        </button>
         <nav className="side-nav">
           {navigationItems.map((item) => (
             <button
               className={activeView === item.id ? "active" : ""}
               type="button"
               key={item.id}
-              onClick={() => setActiveView(item.id)}
+              onClick={() => {
+                setActiveView(item.id);
+                setIsMobileMenuOpen(false);
+              }}
             >
               <Icon name={item.icon} />
               {item.label}
@@ -828,114 +912,154 @@ function App() {
       </aside>
 
       <section className="workspace">
-        <header className="workspace-header">
-          <div>
-            <p className="eyebrow">{activeView === "work" ? "Today" : activeView === "dashboard" ? "Dashboard" : "Records"}</p>
-            <h1>{activeView === "work" ? "Start today's shift." : activeView === "dashboard" ? "Your work overview." : "Week records."}</h1>
-          </div>
-          <button className="ghost-button" type="button" onClick={() => setActiveView("records")}>
-            <Icon name="archive" />
-            Week records
-          </button>
-        </header>
+        {activeView !== "work" && (
+          <header className="workspace-header">
+            <div>
+              <p className="eyebrow">{activeView === "dashboard" ? "Dashboard" : "Records"}</p>
+              <h1>{activeView === "dashboard" ? "Your work overview." : "Week records."}</h1>
+            </div>
+            <button className="ghost-button" type="button" onClick={() => setActiveView("records")}>
+              <Icon name="archive" />
+              Week records
+            </button>
+          </header>
+        )}
 
         {activeView === "work" && (
           <section className="work-view">
             <div className="today-card">
+              <div className="live-earnings-panel">
+                <div className="live-metric-card">
+                  <span>Hours worked</span>
+                  <strong key={`hours-${activeWorkHoursText}`} className={isWorkTimerRunning ? "animated-number" : ""}>{activeWorkHoursText}</strong>
+                </div>
+                <div className="live-metric-card">
+                  <span>Earned so far</span>
+                  <strong key={`pay-${activeWorkPayText}`} className={isWorkTimerRunning ? "animated-number money-number" : "money-number"}>{activeWorkPayText}</strong>
+                </div>
+              </div>
               <div className="today-card-header">
                 <div>
                   <p className="eyebrow">Current shift</p>
                   <h2>{currentWorkDay.label}</h2>
                   <span>{currentWorkDay.date}</span>
                 </div>
-                <strong>{totals.daily[activeWorkIndex].toFixed(2)} hrs</strong>
+                <div className="time-format-toggle" role="group" aria-label="Time format">
+                  <button className={timeFormat === "12" ? "active" : ""} type="button" onClick={() => setTimeFormat("12")}>
+                    12h
+                  </button>
+                  <button className={timeFormat === "24" ? "active" : ""} type="button" onClick={() => setTimeFormat("24")}>
+                    24h
+                  </button>
+                </div>
               </div>
+              <div className="mini-summary work-summary">
+                <article>
+                  <span>This week</span>
+                  <strong>{totals.weeklyHours.toFixed(2)} hrs</strong>
+                </article>
+                <article>
+                  <span>Estimated pay</span>
+                  <strong>{money(totals.weeklyPay)}</strong>
+                </article>
+                <article>
+                  <span>Status</span>
+                  <strong>{week.isPaid ? "Paid" : "Unpaid"}</strong>
+                </article>
+              </div>
+              <section className={`primary-punch-panel ${isWorkTimerRunning ? "is-running" : ""}`} aria-label="Shift control">
+                <div>
+                  <span>{isWorkTimerRunning ? "Shift is running" : currentWorkDayCompleted ? "Shift completed" : "Ready for today"}</span>
+                  <strong>{isWorkTimerRunning ? formatRunningTime(currentWorkDay, activeTimer, now) : currentWorkDayCompleted ? "Done" : "Start when ready"}</strong>
+                </div>
+                <button
+                  className={`primary-punch-button ${isWorkTimerRunning ? "running" : ""} ${currentWorkDayCompleted ? "completed" : ""}`}
+                  type="button"
+                  onClick={() => toggleDayTimer(activeWorkIndex)}
+                  disabled={hasOtherActiveTimer || currentWorkDayCompleted || isSaving}
+                >
+                  <Icon name={isWorkTimerRunning || currentWorkDayCompleted ? "stop" : "play"} />
+                  {isWorkTimerRunning ? "Stop shift" : currentWorkDayCompleted ? "Completed" : "Start shift"}
+                </button>
+              </section>
               <div className="today-table">
                 {renderDayRow(currentWorkDay, activeWorkIndex, "today")}
               </div>
               <div className="actions split-actions">
-                <button className="primary-button" type="button" onClick={saveWeek} disabled={isSaving}>
-                  <Icon name="save" />
-                  {isSaving ? "Saving" : "Save week"}
-                </button>
                 <button className="ghost-button" type="button" onClick={() => setActiveView("records")}>
                   <Icon name="menu" />
                   View all days
                 </button>
               </div>
             </div>
-            <div className="mini-summary">
-              <article>
-                <span>This week</span>
-                <strong>{totals.weeklyHours.toFixed(2)} hrs</strong>
-              </article>
-              <article>
-                <span>Estimated pay</span>
-                <strong>{money(totals.weeklyPay)}</strong>
-              </article>
-              <article>
-                <span>Status</span>
-                <strong>{week.isPaid ? "Paid" : "Unpaid"}</strong>
-              </article>
-            </div>
           </section>
         )}
 
         {activeView === "dashboard" && (
           <section className="dashboard-view">
-            <section className="summary-grid" aria-label="Weekly summary">
-              <article className="rate-card">
-                <span>Hourly rate</span>
-                <label className="pretty-field rate-field">
-                  <FieldIcon name="dollar" />
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    placeholder="35.00"
-                    value={hourlyRate}
-                    onChange={(event) => setHourlyRate(event.target.value)}
-                    onWheel={(event) => event.currentTarget.blur()}
-                    aria-label="Hourly rate"
-                  />
-                </label>
-                <button className="primary-button rate-save-button" type="button" onClick={saveRateAndContinue}>
-                  <Icon name="save" />
-                  Save rate
-                </button>
-              </article>
-              <article>
-                <span>Current week hours</span>
-                <strong>{totals.weeklyHours.toFixed(2)}</strong>
-              </article>
-              <article>
-                <span>Current week pay</span>
-                <strong>{money(totals.weeklyPay)}</strong>
-              </article>
-              <article>
-                <span>Total money</span>
+            <section className="dashboard-hero" aria-label="Dashboard summary">
+              <article className="dashboard-money-card">
+                <span>Total money earned</span>
                 <strong>{money(allWeeksSummary.pay)}</strong>
+                <small>{allWeeksSummary.hours.toFixed(2)} total hours recorded</small>
               </article>
-              <article>
-                <span>Total worked</span>
-                <strong>{allWeeksSummary.hours.toFixed(2)}</strong>
+              <article className="dashboard-small-card">
+                <span>This week</span>
+                <strong>{totals.weeklyHours.toFixed(2)} hrs</strong>
+                <small>{money(totals.weeklyPay)} estimated</small>
               </article>
-              <article>
+              <article className="dashboard-small-card alert-card">
                 <span>Unpaid weeks</span>
                 <strong>{unpaidWeeks.length}</strong>
+                <small>{money(unpaidWeeks.reduce((sum, savedWeek) => sum + savedWeek.totals.weeklyPay, 0))} pending</small>
               </article>
+            </section>
+
+            <section className="dashboard-rate-panel" aria-label="Hourly rate">
+              <div>
+                <span>Hourly rate</span>
+                <strong>{money(Number(hourlyRate || 0))}</strong>
+              </div>
+              <label className="pretty-field rate-field">
+                <FieldIcon name="dollar" />
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="35.00"
+                  value={hourlyRate}
+                  onChange={(event) => setHourlyRate(event.target.value)}
+                  onWheel={(event) => event.currentTarget.blur()}
+                  aria-label="Hourly rate"
+                />
+              </label>
+              <button className="primary-button rate-save-button" type="button" onClick={saveRateAndContinue}>
+                <Icon name="save" />
+                Save rate
+              </button>
             </section>
           </section>
         )}
 
         {activeView === "records" && (
           <section className="records-view">
-            <section className="week-navigation" aria-label="Week navigation">
-              <div>
-                <p className="eyebrow">Selected week</p>
+            <section className="records-hero" aria-label="Selected week summary">
+              <article className="records-week-card">
+                <span>Selected week</span>
                 <strong>{week.weekStart}</strong>
-                <span>{week.isPaid ? "Paid" : "Unpaid until marked paid"}</span>
-              </div>
+                <small>{week.isPaid ? "Paid" : "Unpaid until marked paid"}</small>
+              </article>
+              <article className="records-stat-card">
+                <span>Hours</span>
+                <strong>{totals.weeklyHours.toFixed(2)}</strong>
+              </article>
+              <article className="records-stat-card money-card">
+                <span>Pay</span>
+                <strong>{money(totals.weeklyPay)}</strong>
+              </article>
+            </section>
+
+            <section className="week-navigation" aria-label="Week navigation">
               <div className="week-jump">
                 <button type="button" onClick={() => navigateWeek("previous")}>
                   <Icon name="chevronLeft" />
@@ -1052,6 +1176,7 @@ function App() {
                 <div>
                   <p className="eyebrow">Timesheet</p>
                   <h2>All days</h2>
+                  <span className="table-hint">Edit start, end, break, or note, then save the week.</span>
                 </div>
                 <div className="actions">
                   <button className="sample-button" type="button" onClick={fillSampleWeek}>
