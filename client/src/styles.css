@@ -702,7 +702,9 @@ label {
 
 input,
 select {
+  min-width: 0;
   width: 100%;
+  max-width: 100%;
   height: 44px;
   border: 1px solid #d2dfdb;
   border-radius: 8px;
@@ -766,10 +768,14 @@ select:focus {
 .pretty-field {
   position: relative;
   display: block;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .pretty-field input,
 .pretty-field select {
+  min-width: 0;
+  max-width: 100%;
   height: 48px;
   padding-left: 44px;
   font-weight: 760;
@@ -1193,6 +1199,7 @@ h2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+  min-width: 0;
 }
 
 .shift-edit-fields label {
@@ -1207,6 +1214,8 @@ h2 {
 }
 
 .shift-edit-fields input {
+  min-width: 0;
+  max-width: 100%;
   height: 40px;
   padding: 0 10px;
   color: #17212b;
@@ -1611,11 +1620,41 @@ output {
   .day-row,
   .week-browser,
   .week-navigation {
+    width: 100%;
+    max-width: 100%;
     padding: 14px;
   }
 
   .day-row {
     grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .toolbar label,
+  .pretty-field,
+  .pretty-field input,
+  .pretty-field select,
+  .shift-edit-fields,
+  .shift-edit-fields label,
+  .shift-edit-fields input {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  input[type="date"],
+  input[type="time"] {
+    -webkit-appearance: none;
+    appearance: none;
+    font-size: 16px;
+  }
+
+  .shift-edit-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .shift-edit-fields input {
+    height: 46px;
+    text-align: left;
   }
 
   .week-jump,
